@@ -3,21 +3,34 @@ from collections import deque
 import random
 import numpy as np
 import heapq
+import multiprocessing as mp
+import threading
 
-### Distance functions
-def _l2(p1, p2):
-    return np.sqrt(np.sum(np.power(p2.x - p1.x, 2)))
+MIN_LEAF = 100
 
-class NDPoint(object):
-    """
-    A point in n-dimensional space
-    """
+def _create_sub_tree(tree, distances, points, is_left, level):
+    sub_tree = None
+    if len(points) > 0:
+        sub_tree = VPTree(
+                points=points, dist_fn=tree.dist_fn, level=level)
+    if is_left:
+        tree.left = sub_tree
+    else:
+        tree.right = sub_tree
 
-    def __init__(self, x, idx=None):
-        self.x = np.array(x)
-        self.idx = idx
-    def __repr__(self):
-        return "NDPoint(idx=%s, x=%s)" % (self.idx, self.x)
+class SubTreeThread(threading.Thread):
+    def __init__(self, tree, distances, points, is_left, level):
+        threading.Thread.__init__(self)
+        self.tree = tree
+        self.distances = distances
+        self.points = points
+        self.is_left = is_left
+        self.level = level
+
+    def run(self):
+        _create_sub_tree(
+            self.tree, self.distances, 
+            self.points, self.is_left, self.level)
 
 class VPTree(object):
     """
@@ -25,38 +38,46 @@ class VPTree(object):
     search. 
     """
 
-    def __init__(self, points, dist_fn=_l2):
+    def __init__(
+            self, points, dist_fn, min_leaf=MIN_LEAF, level=0):
         self.left = None
         self.right = None
         self.mu = None
         self.dist_fn = dist_fn
 
+        if len(points) < min_leaf:
+            self.all_points = points
+            return
+
         # choose a better vantage point selection process
         self.vp = points.pop(random.randrange(len(points)))
-
-        if len(points) < 1:
-            return
 
         # choose division boundary at median of distances
         distances = [self.dist_fn(self.vp, p) for p in points]
         self.mu = np.median(distances)
 
-        left_points = []  # all points inside mu radius
-        right_points = []  # all points outside mu radius
+        left_points = []
+        right_points = []
         for i, p in enumerate(points):
             d = distances[i]
-            if d >= self.mu:
-                right_points.append(p)
-            else:
+            if d < self.mu:
                 left_points.append(p)
-
-        if len(left_points) > 0:
-            self.left = VPTree(
-                    points=left_points, dist_fn=self.dist_fn)
-
-        if len(right_points) > 0:
-            self.right = VPTree(
-                    points=right_points, dist_fn=self.dist_fn)
+            else:
+                right_points.append(p)
+        if level < 3:
+            left_thread = SubTreeThread(
+                    self, distances, left_points, True, level+1)
+            right_thread = SubTreeThread(
+                    self, distances, right_points, False, level+1)
+            left_thread.start()
+            right_thread.start()
+            left_thread.join()
+            right_thread.join()
+        else:
+            _create_sub_tree(
+                self, distances, left_points, True, level+1)
+            _create_sub_tree(
+                self, distances, right_points, False, level+1)
 
     def is_leaf(self):
         return (self.left is None) and (self.right is None)
@@ -85,22 +106,22 @@ class VPTree(object):
             if node is None:
                 continue
 
+            if node.is_leaf():
+                for point in node.all_points:
+                    neighbors.push(self.dist_fn(q, point), point)
+                continue
+
             d = self.dist_fn(q, node.vp)
             if d < tau:
                 neighbors.push(d, node.vp)
                 tau, _ = neighbors.queue[-1]
 
-            if node.is_leaf():
-                continue
-
             if d < node.mu:
-                if d < node.mu + tau:
-                    visit_stack.append(node.left)
+                visit_stack.append(node.left)
                 if d >= node.mu - tau:
                     visit_stack.append(node.right)
             else:
-                if d >= node.mu - tau:
-                    visit_stack.append(node.right)
+                visit_stack.append(node.right)
                 if d < node.mu + tau:
                     visit_stack.append(node.left)
         return neighbors.queue
