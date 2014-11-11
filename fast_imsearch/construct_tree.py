@@ -7,7 +7,6 @@ from vptree import *
 
 TRAIN_DIR = '/data/hays_lab/people/hays/baikal/flickr_final_new_descs_fixed/Barcelona/00001'
 TEST_DIR = '/data/hays_lab/people/hays/baikal/flickr_final_new_descs_fixed/Madrid/00001'
-MAX_CHILDREN = 100
 
 def l2_distance(a, b):
     a, b = a.feature, b.feature
@@ -46,22 +45,22 @@ class ImageTree(object):
         mat_files = glob.glob(input_dir + '/*.mat')
         print "Found %d files" % len(mat_files)
         features = [self.get_node(f) for f in mat_files]
-        self.tree = VPTree(features, self.distance, MAX_CHILDREN)
+        self.tree = VPTree(features, self.distance)
         return self.tree
 
-    def get_nearest_neighbors(self, mat_file):
-        yield list(self.tree.find(self.get_node(mat_file)))
+    def get_nearest_neighbors(self, mat_file, k):
+        node = self.get_node(mat_file)
+        return self.tree.get_nearest_neighbors(
+                node, 5)
 
 if __name__ == '__main__':
     tree = ImageTree(TRAIN_DIR)
     mat_files = glob.glob(TEST_DIR + '/*.mat')
     test_file = mat_files[2]
-    n = 0
     im = Image.open(get_img_from_mat(test_file))
     im.show()
-    for result in tree.get_nearest_neighbors(test_file):
-        path = get_img_from_mat(result[0][0].path)
+    for result in tree.get_nearest_neighbors(test_file, 3):
+        print result
+        path = get_img_from_mat(result[1].path)
         im_result = Image.open(path)
         im_result.show()
-        n += 1
-        if n >= 5: break

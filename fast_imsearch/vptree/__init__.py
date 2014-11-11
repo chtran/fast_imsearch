@@ -1,100 +1,156 @@
-""" VP-tree data structure
+from collections import namedtuple
+from collections import deque
+import random
+import numpy as np
+import heapq
 
-    Can be used for nearest-neighbour querys in any metric space.
+### Distance functions
+def _l2(p1, p2):
+    return np.sqrt(np.sum(np.power(p2.x - p1.x, 2)))
 
-    This software was written by Paul Harrison, and is released into the public domain.
-"""
+class NDPoint(object):
+    """
+    A point in n-dimensional space
+    """
 
-import sys, random, heapq
+    def __init__(self, x, idx=None):
+        self.x = np.array(x)
+        self.idx = idx
+    def __repr__(self):
+        return "NDPoint(idx=%s, x=%s)" % (self.idx, self.x)
 
-class _Node:
-    def minimum_distance(self, distances):
-        minimum = 0.0
-        for i in xrange(len(distances)):
-            if distances[i] < self.lower_bounds[i]:
-                minimum = max(minimum, self.lower_bounds[i] - distances[i])
-            elif distances[i] > self.upper_bounds[i]:
-                minimum = max(minimum, distances[i] - self.upper_bounds[i])
-        return minimum
+class VPTree(object):
+    """
+    An efficient data structure to perform nearest-neighbor
+    search. 
+    """
 
-    def help_find(self, item, distances, heap, distance):
-        d = distance(self.vantage, item)
-        new_distances = distances + (d,)
-        
-        heapq.heappush(heap, (d, 0, self.vantage))
-        
-        for child in self.children:
-            heapq.heappush(heap, (child.minimum_distance(new_distances), 1, child, new_distances))
+    def __init__(self, points, dist_fn=_l2):
+        self.left = None
+        self.right = None
+        self.mu = None
+        self.dist_fn = dist_fn
 
+        # choose a better vantage point selection process
+        self.vp = points.pop(random.randrange(len(points)))
 
-def _make_node(items, distance, max_children):
-    if not items:
-        return None
+        if len(points) < 1:
+            return
 
-    node = _Node()
-    
-    node.lower_bounds = [ ]
-    node.upper_bounds = [ ]
-    for i in xrange(len(items[0][1])):
-        distance_list = [ item[1][i] for item in items ]
-        node.lower_bounds.append(min(distance_list))
-        node.upper_bounds.append(max(distance_list))
-    
-    node.vantage = items[0][0]
-    items = items[1:]
-    
-    node.children = [ ]
+        # choose division boundary at median of distances
+        distances = [self.dist_fn(self.vp, p) for p in points]
+        self.mu = np.median(distances)
 
-    if not items:
-        return node
-        
-    items = [ (item[0], item[1]+(distance(node.vantage, item[0]),)) for item in items ]
-    
-    distances = { }
-    for item in items: distances[item[1][-1]] = True
-    distance_list = distances.keys()
-    distance_list.sort()
-    n_children = min(max_children, len(distance_list))
-    split_points = [ -1 ]
-    for i in xrange(n_children):
-        split_points.append(distance_list[(i+1)*(len(distance_list)-1)//n_children])
-
-    for i in xrange(n_children):
-        child_items = [ item for item in items if split_points[i] < item[1][-1] <= split_points[i+1] ]
-        child = _make_node(child_items,distance,max_children)
-        if child: node.children.append(child)
-    
-    return node
-
-        
-class VPTree:
-    def __init__(self, items, distance, max_children=2):
-        """ items        : list of items to make tree out of
-            distance     : function that returns the distance between two items
-            max_children : maximum number of children for each node
-            
-            Using larger max_children will reduce the time needed to construct the tree,
-            but may make queries less efficient.
-        """
-    
-        self.distance = distance
-        
-        items = [ (item, ()) for item in items ]
-        random.shuffle(items)
-        self.root = _make_node(items, distance, max_children)
-
-    def find(self, item):
-        """ Return iterator yielding items in tree in order of distance from supplied item.
-        """
-    
-        if not self.root: return
-        
-        heap = [ (0, 1, self.root, ()) ]
-        
-        while heap:
-            top = heapq.heappop(heap)
-            if top[1]:
-                top[2].help_find(item, top[3], heap, self.distance)
+        left_points = []  # all points inside mu radius
+        right_points = []  # all points outside mu radius
+        for i, p in enumerate(points):
+            d = distances[i]
+            if d >= self.mu:
+                right_points.append(p)
             else:
-                yield top[2], top[0]
-        
+                left_points.append(p)
+
+        if len(left_points) > 0:
+            self.left = VPTree(
+                    points=left_points, dist_fn=self.dist_fn)
+
+        if len(right_points) > 0:
+            self.right = VPTree(
+                    points=right_points, dist_fn=self.dist_fn)
+
+    def is_leaf(self):
+        return (self.left is None) and (self.right is None)
+
+    ### Operations
+    def get_nearest_neighbors(self, q, k=1):
+        """
+        find k nearest neighbor(s) of q
+
+        :param q: a query point
+        :param k: number of nearest neighbors
+
+        """
+
+        # buffer for nearest neightbors
+        neighbors = PriorityQueue(k)
+
+        # list of nodes ot visit
+        visit_stack = deque([self])
+
+        # distance of n-nearest neighbors so far
+        tau = np.inf
+
+        while len(visit_stack) > 0:
+            node = visit_stack.popleft()
+            if node is None:
+                continue
+
+            d = self.dist_fn(q, node.vp)
+            if d < tau:
+                neighbors.push(d, node.vp)
+                tau, _ = neighbors.queue[-1]
+
+            if node.is_leaf():
+                continue
+
+            if d < node.mu:
+                if d < node.mu + tau:
+                    visit_stack.append(node.left)
+                if d >= node.mu - tau:
+                    visit_stack.append(node.right)
+            else:
+                if d >= node.mu - tau:
+                    visit_stack.append(node.right)
+                if d < node.mu + tau:
+                    visit_stack.append(node.left)
+        return neighbors.queue
+
+
+    def get_all_in_range(self, q, tau):
+        """
+        find all points within a given radius of point q
+
+        :param q: a query point
+        :param tau: the maximum distance from point q
+        """
+
+        # buffer for nearest neightbors
+        neighbors = []
+
+        # list of nodes ot visit
+        visit_stack = deque([self])
+
+        while len(visit_stack) > 0:
+            node = visit_stack.popleft()
+            if node is None:
+                continue
+
+            d = self.dist_fn(q, node.vp)
+            if d < tau:
+                neighbors.append((d, node.vp))
+
+            if node.is_leaf():
+                continue
+
+            if d < node.mu:
+                if d < node.mu + tau:
+                    visit_stack.append(node.left)
+                if d >= node.mu - tau:
+                    visit_stack.append(node.right)
+            else:
+                if d >= node.mu - tau:
+                    visit_stack.append(node.right)
+                if d < node.mu + tau:
+                    visit_stack.append(node.left)
+        return neighbors
+
+class PriorityQueue(object):
+    def __init__(self, size=None):
+        self.queue = []
+        self.size = size
+
+    def push(self, priority, item):
+        self.queue.append((priority, item))
+        self.queue.sort()
+        if self.size is not None and len(self.queue) > self.size:
+            self.queue.pop()
