@@ -24,7 +24,7 @@ def brute_force(q, points, k):
     return sorted_distances[:k]
 
 if __name__ == '__main__':
-    num_samples = 500000
+    num_samples = 100000
     num_dimension = 1000
     num_test = 3
     k = 100
@@ -33,17 +33,29 @@ if __name__ == '__main__':
     Y = np.random.uniform(0, 100000, size=(num_test, num_dimension))
     points = [NDPoint(X[i,:], i) for i in range(np.size(X,0))]
     start_time = time.time()
-    print "Start constructing tree"
-    tree = VPTree(points, l2)
-    print "Constructed tree in", time.time() - start_time
+    print "Start constructing single threaded tree"
+    single_tree = VPTree(points, l2)
+    done_single = time.time()
+    print "Constructed single tree in", done_single - start_time
+
+    #print "Start constructing parallel tree"
+    #parallel_tree = ParallelVPTree(4, points, l2)
+    #print "Constructed parallel tree in", time.time() - done_single
     test_points = [NDPoint(Y[i,:], i) for i in range(np.size(Y,0))]
-    for q in test_points:
+    for i, q in enumerate(test_points):
+        print
+        print "Test #",i
         start_time = time.time()
-        neighbors = tree.get_nearest_neighbors(q, k)
-        done_tree = time.time()
+        single_neighbors = single_tree.get_nearest_neighbors(q, k)
+        done_single = time.time()
+        #parallel_neighbors = parallel_tree.get_nearest_neighbors(q, k)
+        #done_parallel = time.time()
         brute_force_neighbors = brute_force(q, points, k)
         done_brute_force = time.time()
-        print "tree: %f. brute-force: %f" % (done_brute_force - done_tree, done_tree - start_time)
+        print "Single:", done_single - start_time
+        #print "Multiple:", done_parallel - done_single
+        print "Brute-force:", done_brute_force - done_single
         for i in range(k):
-            assert neighbors[i][1].idx == brute_force_neighbors[i][1].idx
+            assert single_neighbors[i][1].idx == brute_force_neighbors[i][1].idx
+        #    assert parallel_neighbors[i][1].idx == brute_force_neighbors[i][1].idx
     print "Success"
