@@ -67,7 +67,7 @@ def _make_node(items, distance, max_children):
     return node
 
         
-class VPTree:
+class OldVPTree:
     def __init__(self, items, distance, max_children=2):
         """ items        : list of items to make tree out of
             distance     : function that returns the distance between two items
@@ -82,6 +82,13 @@ class VPTree:
         items = [ (item, ()) for item in items ]
         random.shuffle(items)
         self.root = _make_node(items, distance, max_children)
+
+    def get_nearest_neighbors(self, item, k):
+        results = []
+        iterator = self.find(item)
+        for i in range(k):
+            results.append(iterator.next())
+        return results
 
     def find(self, item):
         """ Return iterator yielding items in tree in order of distance from supplied item.

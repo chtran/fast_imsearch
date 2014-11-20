@@ -1,3 +1,5 @@
 *.swp
 *.pyc
+*.swn
+*.swo
 fast_imsearch/profile/*

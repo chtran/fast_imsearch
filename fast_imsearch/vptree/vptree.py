@@ -6,7 +6,8 @@ import heapq
 import multiprocessing as mp
 import threading
 
-MIN_LEAF = 100
+LEAF_SIZE = 16
+SPLIT_SIZE = 16
 
 class VPTree(object):
     """
@@ -15,18 +16,20 @@ class VPTree(object):
     """
 
     def __init__(
-            self, points, dist_fn, min_leaf=MIN_LEAF):
+            self, points, dist_fn, leaf_size=LEAF_SIZE):
         self.left = None
         self.right = None
         self.mu = None
         self.dist_fn = dist_fn
 
-        if len(points) < min_leaf:
-            self.all_points = points
-            return
-
         # choose a better vantage point selection process
-        self.vp = points.pop(random.randrange(len(points)))
+        self.vp = fast_imsearch.vptree.select_vp(points, dist_fn)
+
+        if len(points) < 1:
+            return
+        if len(points) <= LEAF_SIZE:
+            self.children = points
+            return
 
         # choose division boundary at median of distances
         distances = [self.dist_fn(self.vp, p) for p in points]
@@ -44,15 +47,38 @@ class VPTree(object):
             self.left = VPTree(
                 points=left_points, 
                 dist_fn=self.dist_fn, 
-                min_leaf=min_leaf)
+                leaf_size=leaf_size)
         if len(right_points) > 0:
             self.right = VPTree(
                 points=right_points, 
                 dist_fn=self.dist_fn,
-                min_leaf=min_leaf)
+                leaf_size=leaf_size)
 
     def is_leaf(self):
         return (self.left is None) and (self.right is None)
+
+    def get_size(self):
+        left_size = 0
+        right_size = 0
+        if self.left is not None:
+            left_size = self.left.get_size()
+        if self.right is not None:
+            right_size = self.right.get_size()
+        return left_size + right_size + 1
+
+    def get_height(self):
+        left_height = 0
+        right_height = 0
+        if self.left is not None:
+            left_height = self.left.get_height()
+        if self.right is not None:
+            right_height = self.right.get_height()
+        return max(left_height, right_height) + 1
+
+    def add_node(self, stack, node, q):
+        if node is not None:
+            d = self.dist_fn(q, node.vp)
+            heapq.heappush(stack, (d, node))
 
     ### Operations
     def get_nearest_neighbors(self, q, k=1):
@@ -68,74 +94,43 @@ class VPTree(object):
         neighbors = PriorityQueue(k)
 
         # list of nodes ot visit
-        visit_stack = deque([self])
+        visit_stack = []
+        self.add_node(visit_stack, self, q)
 
         # distance of n-nearest neighbors so far
         tau = np.inf
 
+        total_seen = 0
         while len(visit_stack) > 0:
-            node = visit_stack.popleft()
+            d, node = heapq.heappop(visit_stack)
+            total_seen += 1
             if node is None:
                 continue
 
-            if node.is_leaf():
-                for point in node.all_points:
-                    neighbors.push(self.dist_fn(q, point), point)
-                continue
-
-            d = self.dist_fn(q, node.vp)
             if d < tau:
                 neighbors.push(d, node.vp)
-                tau, _ = neighbors.queue[-1]
-
-            if d < node.mu:
-                visit_stack.append(node.left)
-                if d >= node.mu - tau:
-                    visit_stack.append(node.right)
-            else:
-                visit_stack.append(node.right)
-                if d < node.mu + tau:
-                    visit_stack.append(node.left)
-        return neighbors.queue
-
-
-    def get_all_in_range(self, q, tau):
-        """
-        find all points within a given radius of point q
-
-        :param q: a query point
-        :param tau: the maximum distance from point q
-        """
-
-        # buffer for nearest neightbors
-        neighbors = []
-
-        # list of nodes ot visit
-        visit_stack = deque([self])
-
-        while len(visit_stack) > 0:
-            node = visit_stack.popleft()
-            if node is None:
-                continue
-
-            d = self.dist_fn(q, node.vp)
-            if d < tau:
-                neighbors.append((d, node.vp))
+                if neighbors.len() == k:
+                    tau, _ = neighbors.queue[-1]
 
             if node.is_leaf():
+                total_seen += len(node.children)
+                for child_p in node.children:
+                    child_d = self.dist_fn(q, child_p)
+                    neighbors.push(child_d, child_p)
+                if neighbors.len() == k:
+                    tau, _ = neighbors.queue[-1]
                 continue
 
             if d < node.mu:
-                if d < node.mu + tau:
-                    visit_stack.append(node.left)
-                if d >= node.mu - tau:
-                    visit_stack.append(node.right)
+                self.add_node(visit_stack, node.left, q)
+                if node.mu - d <= tau:
+                    self.add_node(visit_stack, node.right, q)
             else:
-                if d >= node.mu - tau:
-                    visit_stack.append(node.right)
-                if d < node.mu + tau:
-                    visit_stack.append(node.left)
-        return neighbors
+                self.add_node(visit_stack, node.right, q)
+                if d - node.mu <= tau:
+                    self.add_node(visit_stack, node.left, q)
+        print "number nodes seen:",total_seen
+        return (neighbors.queue, total_seen)
 
 class PriorityQueue(object):
     def __init__(self, size=None):
@@ -147,3 +142,6 @@ class PriorityQueue(object):
         self.queue.sort()
         if self.size is not None and len(self.queue) > self.size:
             self.queue.pop()
+
+    def len(self):
+        return len(self.queue)

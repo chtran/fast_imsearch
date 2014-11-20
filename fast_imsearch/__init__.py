@@ -1,1 +1,2 @@
 import vptree
+import lshash
